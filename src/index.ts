@@ -126,6 +126,7 @@ app.use('/api/feedback', feedbackRoutes);
 app.use('/api/conversations', conversationRoutes);
 app.use('/api/networks', networkRoutes);
 app.use('/api/categories', categoryRoutes);
+app.use('/api/waitlist', waitlistRoutes);
 
 // Initialize WebSocket service
 const wsService = new WebSocketService(httpServer);
