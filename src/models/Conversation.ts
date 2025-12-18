@@ -1,9 +1,10 @@
 import mongoose, { Schema, Document } from 'mongoose';
+import { Channel } from '../types';
 
 export interface IConversation extends Document {
   conversationId: string;
   userEmail: string;
-  channel: 'web' | 'whatsapp' | 'farcaster';
+  channel: Channel;
   messages: Array<{
     role: 'user' | 'assistant' | 'system';
     content: string;
@@ -31,7 +32,7 @@ const ConversationSchema = new Schema<IConversation>({
   channel: { 
     type: String, 
     required: true, 
-    enum: ['web', 'whatsapp', 'farcaster'],
+    enum: Object.values(Channel),
     index: true 
   },
   messages: [{

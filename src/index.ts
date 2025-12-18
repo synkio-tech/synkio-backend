@@ -31,6 +31,8 @@ import feedbackRoutes from './routes/feedback';
 import conversationRoutes from './routes/conversations';
 import networkRoutes from './routes/networks';
 import categoryRoutes from './routes/categories';
+import waitlistRoutes from './routes/waitlist';
+import { emailService } from './services/EmailService';
 
 dotenv.config();
 

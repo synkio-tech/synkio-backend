@@ -16,8 +16,7 @@ const WaitlistSchema = new Schema<IWaitlist>({
     required: true,
     unique: true,
     lowercase: true,
-    trim: true,
-    index: true
+    trim: true
   },
   name: {
     type: String,
@@ -39,7 +38,6 @@ const WaitlistSchema = new Schema<IWaitlist>({
   timestamps: true
 });
 
-WaitlistSchema.index({ email: 1 });
 WaitlistSchema.index({ joinedAt: -1 });
 WaitlistSchema.index({ notified: 1 });
 

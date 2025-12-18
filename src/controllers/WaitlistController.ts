@@ -4,6 +4,7 @@ import { logger } from '../utils/logger';
 import { asyncHandler } from '../middleware';
 import { ApiResponse } from '../types';
 import { sanitizeEmail, sanitizeString, containsScriptTags } from '../utils/sanitize';
+import { emailService } from '../services/EmailService';
 
 export class WaitlistController {
   static joinWaitlist = asyncHandler(async (req: Request, res: Response) => {
@@ -47,17 +48,29 @@ export class WaitlistController {
 
     await waitlistEntry.save();
 
+    const emailSent = await emailService.sendWaitlistConfirmation(waitlistEntry.email, waitlistEntry.name);
+    
+    if (emailSent) {
+      waitlistEntry.notified = true;
+      waitlistEntry.notifiedAt = new Date();
+      await waitlistEntry.save();
+      logger.info('Waitlist entry marked as notified', { email: sanitizedEmail });
+    } else {
+      logger.warn('Waitlist entry created but email notification failed', { email: sanitizedEmail });
+    }
+
     const response: ApiResponse = {
       success: true,
       message: 'Successfully joined the waitlist',
       data: {
         email: waitlistEntry.email,
         name: waitlistEntry.name,
-        joinedAt: waitlistEntry.joinedAt
+        joinedAt: waitlistEntry.joinedAt,
+        emailSent
       }
     };
 
-    logger.info('New waitlist signup', { email: sanitizedEmail, name: sanitizedName });
+    logger.info('New waitlist signup', { email: sanitizedEmail, name: sanitizedName, emailSent });
 
     res.status(201).json(response);
   });

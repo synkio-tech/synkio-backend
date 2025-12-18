@@ -1,4 +1,5 @@
 import mongoose, { Schema, Document } from 'mongoose';
+import { Channel } from '../types';
 
 export interface ITransaction extends Document {
   transactionId: string;
@@ -23,7 +24,7 @@ export interface ITransaction extends Document {
     tags?: string[];
   };
   conversationContext: {
-    channel: 'whatsapp' | 'farcaster' | 'web';
+    channel: Channel;
     messageHistory: Array<{
       timestamp: Date;
       sender: string;
@@ -128,7 +129,7 @@ const TransactionSchema = new Schema<ITransaction>({
   conversationContext: {
     channel: {
       type: String,
-      enum: ['whatsapp', 'farcaster', 'web'],
+      enum: Object.values(Channel),
       required: true
     },
     messageHistory: [{
