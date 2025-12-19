@@ -24,8 +24,7 @@ const CategorySchema = new Schema<ICategory>({
     required: true,
     trim: true,
     unique: true,
-    lowercase: true,
-    index: true
+    lowercase: true
   },
   description: {
     type: String,
@@ -51,6 +50,5 @@ const CategorySchema = new Schema<ICategory>({
 });
 
 CategorySchema.index({ isActive: 1, order: 1 });
-CategorySchema.index({ slug: 1 });
 
 export const Category = mongoose.model<ICategory>('Category', CategorySchema);

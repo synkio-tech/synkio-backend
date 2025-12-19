@@ -2,7 +2,6 @@ import 'reflect-metadata';
 import express from 'express';
 import { createServer } from 'http';
 import { ethers } from 'ethers';
-import dotenv from 'dotenv';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -12,6 +11,7 @@ import { errorHandler, notFoundHandler } from './middleware';
 
 // Import config
 import { CONTRACT_ADDRESSES } from './config/contracts';
+import { config } from './config/env';
 
 // Import services
 import { EscrowService } from './services/EscrowService';
@@ -31,12 +31,13 @@ import feedbackRoutes from './routes/feedback';
 import conversationRoutes from './routes/conversations';
 import networkRoutes from './routes/networks';
 import categoryRoutes from './routes/categories';
+import waitlistRoutes from './routes/waitlist';
+import { emailService } from './services/EmailService';
 
-dotenv.config();
 
 const app = express();
 const httpServer = createServer(app);
-const port = process.env.BACKEND_PORT || 4000;
+const port = config.server.port;
 
 // Middleware
 app.use(helmet());
@@ -55,7 +56,7 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // Database connection
-mongoose.connect(process.env.DATABASE_URL || 'mongodb://localhost:27017/synkio')
+mongoose.connect(config.database.url)
   .then(() => logger.info('Connected to MongoDB'))
   .catch((error) => {
     logger.error('MongoDB connection error:', error);
@@ -63,7 +64,7 @@ mongoose.connect(process.env.DATABASE_URL || 'mongodb://localhost:27017/synkio')
   });
 
 // Initialize blockchain services
-const privateKey = process.env.PRIVATE_KEY;
+const privateKey = config.blockchain.privateKey;
 
 if (!privateKey) {
   logger.error("Missing PRIVATE_KEY environment variable. Please check .env file.");
@@ -126,6 +127,7 @@ app.use('/api/feedback', feedbackRoutes);
 app.use('/api/conversations', conversationRoutes);
 app.use('/api/networks', networkRoutes);
 app.use('/api/categories', categoryRoutes);
+app.use('/api/waitlist', waitlistRoutes);
 
 // Initialize WebSocket service
 const wsService = new WebSocketService(httpServer);
@@ -141,6 +143,25 @@ app.get('/', (req, res) => {
     websocket: {
       connectedClients: wsService.getConnectedClients(),
       enabled: true
+    },
+    email: {
+      configured: emailService.isConfigured()
+    }
+  });
+});
+
+// Email service diagnostic endpoint
+app.get('/api/email/status', (req, res) => {
+  const configured = emailService.isConfigured();
+  const { smtpHost, smtpPort, smtpUser, smtpPass } = config.email;
+  res.status(200).json({
+    success: true,
+    emailService: {
+      configured,
+      smtpHost: smtpHost || 'not set',
+      smtpPort: smtpPort?.toString() || 'not set',
+      smtpUser: smtpUser ? smtpUser.substring(0, 3) + '***' : 'not set',
+      smtpPass: smtpPass ? '***' : 'not set'
     }
   });
 });

@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { Conversation } from '../models/Conversation';
 import { logger } from '../utils/logger';
 import { asyncHandler } from '../middleware';
-import { ApiResponse } from '../types';
+import { ApiResponse, Channel } from '../types';
 import { sanitizeEmail } from '../utils/sanitize';
 import { randomUUID } from 'crypto';
 import { getWebSocketService } from '../services/websocket';
@@ -36,7 +36,7 @@ export class ConversationController {
     const conversation = new Conversation({
       conversationId,
       userEmail: sanitizedEmail,
-      channel: channel || 'web',
+      channel: channel || Channel.WEB,
       messages: [],
       context: {}
     });

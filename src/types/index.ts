@@ -1,5 +1,30 @@
 import { Request, Response, NextFunction } from 'express';
 
+/**
+ * Channel Enum - Centralized channel definitions
+ * 
+ * To add a new channel:
+ * 1. Add the channel to the Channel enum below
+ * 2. Add it to ACTIVE_CHANNELS if it should be enabled
+ * 3. Update models/schemas that use channel enums (Conversation, Transaction)
+ * 
+ * To remove a channel:
+ * 1. Remove from Channel enum
+ * 2. Remove from ACTIVE_CHANNELS
+ * 3. Update any channel-specific logic
+ */
+export enum Channel {
+  WEB = 'web',
+  WHATSAPP = 'whatsapp',
+  FARCASTER = 'farcaster'
+}
+
+export const ACTIVE_CHANNELS = [Channel.WEB, Channel.WHATSAPP] as const
+
+export function isActiveChannel(channel: string): boolean {
+  return ACTIVE_CHANNELS.includes(channel as Channel)
+}
+
 export enum FeedbackChannel {
   WEB = 'web',
   WHATSAPP = 'whatsapp'
