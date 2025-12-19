@@ -4,9 +4,17 @@
  * Maintains compatibility with current vendor/product system
  */
 
-import { McpClient } from '@modelcontextprotocol/sdk';
 import { logger } from '../utils/logger';
 import { Chain } from '../types';
+import { Client as McpClient } from '@modelcontextprotocol/sdk';
+// MCP SDK import - optional, only if package is installed
+let McpClient: any;
+try {
+  const mcpSdk = require('@modelcontextprotocol/sdk');
+  McpClient = mcpSdk.McpClient;
+} catch (error) {
+  logger.warn('@modelcontextprotocol/sdk not installed - MCP features disabled');
+}
 
 interface SafetyResult {
   riskLevel: 'low' | 'medium' | 'high' | 'critical';
@@ -36,11 +44,16 @@ interface VendorSafetyProfile {
 }
 
 export class McpIntegrationService {
-  private safetyClient: McpClient;
-  private paymentsClient: McpClient;
+  private safetyClient: any;
+  private paymentsClient: any;
   private isConnected: boolean = false;
 
   constructor() {
+    if (!McpClient) {
+      logger.warn('MCP SDK not available - McpIntegrationService will use fallback mode');
+      return;
+    }
+    
     this.safetyClient = new McpClient('synkio-safety');
     this.paymentsClient = new McpClient('synkio-payments');
     this.initialize();

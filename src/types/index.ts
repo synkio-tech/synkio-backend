@@ -22,7 +22,7 @@ export enum Channel {
 export const ACTIVE_CHANNELS = [Channel.WEB, Channel.WHATSAPP] as const
 
 export function isActiveChannel(channel: string): boolean {
-  return ACTIVE_CHANNELS.includes(channel as Channel)
+  return (ACTIVE_CHANNELS as readonly string[]).includes(channel)
 }
 
 export enum FeedbackChannel {
