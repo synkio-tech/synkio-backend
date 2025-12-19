@@ -1,38 +1,38 @@
 import nodemailer, { Transporter } from 'nodemailer';
 import { logger } from '../utils/logger';
+import { config } from '../config/env';
 
 class EmailService {
   private transporter: Transporter | null;
-  private readonly fromAddress = 'Synkio <info@synkio.app>';
+  private readonly fromAddress: string;
 
   constructor() {
-    const host = process.env.SMTP_HOST;
-    const port = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : undefined;
-    const user = process.env.SMTP_USER;
-    const pass = process.env.SMTP_PASS;
+    const { smtpHost, smtpPort, smtpUser, smtpPass, fromAddress } = config.email;
 
-    if (!host || !port || !user || !pass) {
+    this.fromAddress = fromAddress;
+
+    if (!smtpHost || !smtpPort || !smtpUser || !smtpPass) {
       this.transporter = null;
       logger.warn('SMTP configuration is missing, email notifications are disabled', {
-        hasHost: !!host,
-        hasPort: !!port,
-        hasUser: !!user,
-        hasPass: !!pass
+        hasHost: !!smtpHost,
+        hasPort: !!smtpPort,
+        hasUser: !!smtpUser,
+        hasPass: !!smtpPass
       });
       return;
     }
 
     this.transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure: port === 465,
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpPort === 465,
       auth: {
-        user,
-        pass
+        user: smtpUser,
+        pass: smtpPass
       }
     });
 
-    logger.info('Email service initialized', { host, port, user: user?.substring(0, 3) + '***' });
+    logger.info('Email service initialized', { host: smtpHost, port: smtpPort, user: smtpUser.substring(0, 3) + '***' });
   }
 
   isConfigured(): boolean {
@@ -164,12 +164,28 @@ You're receiving this because you signed up for our waitlist.`;
       });
       return true;
     } catch (error: any) {
-      logger.error('Error sending waitlist confirmation email', { 
-        email, 
-        error: error.message,
-        stack: error.stack,
-        code: error.code
-      });
+      const errorMessage = error.message || 'Unknown error';
+      const errorCode = error.code || 'UNKNOWN';
+      
+      let userFriendlyMessage = errorMessage;
+      
+      if (errorCode === 'EAUTH' || errorMessage.includes('Invalid login') || errorMessage.includes('WebLoginRequired')) {
+        userFriendlyMessage = 'Gmail authentication failed. Please use an App Password instead of your regular password. See: https://support.google.com/accounts/answer/185833';
+        logger.error('Gmail authentication error - App Password required', {
+          email,
+          errorCode,
+          error,
+          hint: 'Enable 2FA and generate an App Password at https://myaccount.google.com/apppasswords'
+        });
+      } else {
+        logger.error('Error sending waitlist confirmation email', { 
+          email, 
+          error: errorMessage,
+          code: errorCode,
+          stack: error.stack
+        });
+      }
+      
       return false;
     }
   }
