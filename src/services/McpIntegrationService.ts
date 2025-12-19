@@ -6,7 +6,6 @@
 
 import { logger } from '../utils/logger';
 import { Chain } from '../types';
-import { Client as McpClient } from '@modelcontextprotocol/sdk';
 // MCP SDK import - optional, only if package is installed
 let McpClient: any;
 try {
