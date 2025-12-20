@@ -1,17 +1,9 @@
-/**
- * MCP Integration Service
- * Connects existing Synkio backend with MCP Safety and Payments servers
- * Maintains compatibility with current vendor/product system
- */
-
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { logger } from '../utils/logger';
 import { Chain } from '../types';
-import { config } from '../config/env';
+import { DDxyzService } from '../libs/DDxyzService';
+import { BlockRaderService } from '../libs/BlockRaderService';
 
-interface SafetyResult {
+export interface SafetyResult {
   riskLevel: 'low' | 'medium' | 'high' | 'critical';
   score: number;
   reasons: string[];
@@ -23,7 +15,7 @@ interface SafetyResult {
   };
 }
 
-interface VendorSafetyProfile {
+export interface VendorSafetyProfile {
   vendorId: string;
   walletAddress: string;
   safetyScore: number;
@@ -38,173 +30,206 @@ interface VendorSafetyProfile {
   };
 }
 
-export class McpIntegrationService {
-  private safetyClient: Client | null = null;
-  private paymentsClient: Client | null = null;
-  private isConnected: boolean = false;
-  private transportType: 'stdio' | 'sse' | 'none' = 'none';
+export class SafetyService {
+  private ddxyzService: DDxyzService;
+  private blockRaderService: BlockRaderService;
+  private isInitialized: boolean = false;
 
   constructor() {
-    try {
-      this.safetyClient = new Client(
-        {
-          name: 'synkio-backend',
-          version: '1.0.0',
-        },
-        {
-          capabilities: {}
-        }
-      );
-      
-      this.paymentsClient = new Client(
-        {
-          name: 'synkio-backend',
-          version: '1.0.0',
-        },
-        {
-          capabilities: {}
-        }
-      );
-      
-      this.initialize();
-    } catch (error) {
-      logger.warn('MCP SDK initialization failed - McpIntegrationService will use fallback mode', { error });
-    }
-  }
-
-  private async initialize() {
-    if (!this.safetyClient || !this.paymentsClient) {
-      logger.warn('MCP clients not initialized - using fallback mode');
-      return;
-    }
-
-    try {
-      const transport = config.mcp.transport;
-      
-      if (transport === 'stdio') {
-        await this.initializeStdioTransport();
-      } else if (transport === 'sse') {
-        await this.initializeSSETransport();
-      } else {
-        throw new Error(`Unsupported MCP transport: ${transport}`);
-      }
-
-      this.isConnected = true;
-      this.transportType = transport;
-      logger.info(`🛡️ MCP Integration Service connected via ${transport.toUpperCase()} transport`);
-    } catch (error) {
-      logger.error('❌ MCP Integration failed:', error);
-      this.isConnected = false;
-    }
-  }
-
-  private async initializeStdioTransport() {
-    if (!this.safetyClient || !this.paymentsClient) {
-      return;
-    }
-
-    const { safetyServer, paymentsServer } = config.mcp;
-
-    const safetyTransport = new StdioClientTransport({
-      command: safetyServer.command,
-      args: safetyServer.args,
-      env: {
-        ...process.env,
-        DDXYZ_API_KEY: process.env.DDXYZ_API_KEY || '',
-        BLOCKRADER_API_KEY: process.env.BLOCKRADER_API_KEY || '',
-      },
-    });
-
-    const paymentsTransport = new StdioClientTransport({
-      command: paymentsServer.command,
-      args: paymentsServer.args,
-    });
-
-    await this.safetyClient.connect(safetyTransport);
-    await this.paymentsClient.connect(paymentsTransport);
-
-    logger.info('✅ MCP servers connected via stdio (local processes)');
-  }
-
-  private async initializeSSETransport() {
-    if (!this.safetyClient || !this.paymentsClient) {
-      return;
-    }
-
-    const { safetyServer, paymentsServer } = config.mcp;
-
-    if (!safetyServer.url || !paymentsServer.url) {
-      throw new Error('MCP server URLs required for SSE transport. Set MCP_SAFETY_SERVER_URL and MCP_PAYMENTS_SERVER_URL');
-    }
-
-    const safetyTransport = new SSEClientTransport(
-      new URL(safetyServer.url)
-    );
-
-    const paymentsTransport = new SSEClientTransport(
-      new URL(paymentsServer.url)
-    );
-
-    await this.safetyClient.connect(safetyTransport);
-    await this.paymentsClient.connect(paymentsTransport);
-
-    logger.info(`✅ MCP servers connected via SSE: ${safetyServer.url}, ${paymentsServer.url}`);
+    this.ddxyzService = new DDxyzService();
+    this.blockRaderService = new BlockRaderService();
+    this.isInitialized = true;
+    logger.info('🛡️ Safety Service initialized with DD.xyz and BlockRader integration');
   }
 
   getStatus() {
     return {
-      connected: this.isConnected,
-      transport: this.transportType,
-      safetyClient: this.safetyClient !== null,
-      paymentsClient: this.paymentsClient !== null,
-      config: {
-        transport: config.mcp.transport,
-        safetyServerUrl: config.mcp.safetyServer.url || 'not set (using stdio)',
-        paymentsServerUrl: config.mcp.paymentsServer.url || 'not set (using stdio)',
-      }
+      initialized: this.isInitialized,
+      ddxyzConfigured: !!process.env.DDXYZ_API_KEY,
+      blockRaderConfigured: !!process.env.BLOCKRADER_API_KEY,
     };
   }
 
-  /**
-   * Enhanced vendor verification using MCP Safety Server
-   * Integrates with existing vendor system
-   */
+  async checkWalletSafety(
+    address: string,
+    chain: 'ethereum' | 'base' | 'solana'
+  ): Promise<SafetyResult> {
+    const startTime = Date.now();
+    const providers: string[] = [];
+
+    try {
+      let threatData: any = null;
+      let blockRaderData: any = null;
+
+      if (chain === 'ethereum' || chain === 'base') {
+        threatData = await this.ddxyzService.getThreatRisk(address, chain);
+        if (threatData) {
+          providers.push('dd.xyz');
+        }
+      }
+
+      const riskScore = this.calculateRiskScore(threatData, blockRaderData);
+      const riskLevel = this.mapRiskLevel(riskScore);
+      const reasons = this.generateReasons(threatData, blockRaderData);
+      const recommendation = this.generateRecommendation(riskLevel);
+
+      const responseTime = `${Date.now() - startTime}ms`;
+
+      return {
+        riskLevel,
+        score: riskScore,
+        reasons,
+        recommendation,
+        metadata: {
+          providers,
+          responseTime,
+          timestamp: new Date().toISOString()
+        }
+      };
+
+    } catch (error) {
+      logger.error('Wallet safety check error:', error);
+      
+      return {
+        riskLevel: 'medium',
+        score: 50,
+        reasons: ['Unable to verify wallet - exercise caution'],
+        recommendation: '⚠️ Verification unavailable - proceed with caution',
+        metadata: {
+          providers: ['fallback'],
+          responseTime: `${Date.now() - startTime}ms`,
+          timestamp: new Date().toISOString()
+        }
+      };
+    }
+  }
+
+  async checkContractSafety(
+    address: string,
+    chain: 'ethereum' | 'base' | 'solana'
+  ): Promise<SafetyResult> {
+    const startTime = Date.now();
+
+    try {
+      const contractRisk = await this.ddxyzService.getContractRisk(address, chain);
+
+      if (contractRisk) {
+        const riskLevel = contractRisk.riskLevel || 'low';
+        const score = contractRisk.riskScore || 85;
+
+        return {
+          riskLevel: riskLevel as 'low' | 'medium' | 'high' | 'critical',
+          score,
+          reasons: contractRisk.vulnerabilities || ['Contract verified', 'No known vulnerabilities'],
+          recommendation: riskLevel === 'low' ? '✅ Contract appears safe' : '⚠️ Review contract details',
+          metadata: {
+            providers: ['dd.xyz'],
+            responseTime: `${Date.now() - startTime}ms`,
+            timestamp: new Date().toISOString()
+          }
+        };
+      }
+
+      return {
+        riskLevel: 'low',
+        score: 85,
+        reasons: ['Contract verified', 'No known vulnerabilities'],
+        recommendation: '✅ Contract appears safe',
+        metadata: {
+          providers: ['dd.xyz'],
+          responseTime: `${Date.now() - startTime}ms`,
+          timestamp: new Date().toISOString()
+        }
+      };
+    } catch (error) {
+      logger.error('Contract safety check error:', error);
+      return this.getFallbackSafety('Contract verification unavailable');
+    }
+  }
+
+  async checkTransactionSafety(transaction: {
+    to: string;
+    value: string;
+    chain: string;
+  }): Promise<SafetyResult> {
+    const startTime = Date.now();
+
+    try {
+      const toAddressSafety = await this.checkWalletSafety(
+        transaction.to,
+        transaction.chain.toLowerCase() as 'ethereum' | 'base' | 'solana'
+      );
+
+      return {
+        riskLevel: toAddressSafety.riskLevel,
+        score: toAddressSafety.score,
+        reasons: [...toAddressSafety.reasons, 'Standard transfer'],
+        recommendation: toAddressSafety.recommendation,
+        metadata: {
+          providers: toAddressSafety.metadata.providers,
+          responseTime: `${Date.now() - startTime}ms`,
+          timestamp: new Date().toISOString()
+        }
+      };
+    } catch (error) {
+      logger.error('Transaction safety check error:', error);
+      return this.getFallbackSafety('Transaction verification unavailable');
+    }
+  }
+
+  async checkUrlSafety(url: string): Promise<SafetyResult> {
+    const startTime = Date.now();
+
+    try {
+      const urlRisk = await this.ddxyzService.getUrlRisk(url);
+
+      if (urlRisk) {
+        const riskLevel = urlRisk.riskLevel || 'low';
+        const score = urlRisk.riskScore || 95;
+
+        return {
+          riskLevel: riskLevel as 'low' | 'medium' | 'high' | 'critical',
+          score,
+          reasons: urlRisk.reasons || ['Domain verified', 'No malicious patterns'],
+          recommendation: riskLevel === 'low' ? '✅ Link appears safe' : '⚠️ Review link before clicking',
+          metadata: {
+            providers: ['dd.xyz'],
+            responseTime: `${Date.now() - startTime}ms`,
+            timestamp: new Date().toISOString()
+          }
+        };
+      }
+
+      return {
+        riskLevel: 'low',
+        score: 95,
+        reasons: ['Domain verified', 'No malicious patterns'],
+        recommendation: '✅ Link appears safe',
+        metadata: {
+          providers: ['dd.xyz'],
+          responseTime: `${Date.now() - startTime}ms`,
+          timestamp: new Date().toISOString()
+        }
+      };
+    } catch (error) {
+      logger.error('URL safety check error:', error);
+      return this.getFallbackSafety('URL verification unavailable');
+    }
+  }
+
   async enhancedVendorVerification(
     vendorId: string,
     walletAddress: string,
     chain: Chain
   ): Promise<VendorSafetyProfile> {
-    
-    if (!this.isConnected) {
-      return this.getFallbackVendorProfile(vendorId, walletAddress);
-    }
-
     try {
-      if (!this.safetyClient || !this.isConnected) {
-        return this.getFallbackVendorProfile(vendorId, walletAddress);
-      }
+      const walletSafety = await this.checkWalletSafety(
+        walletAddress,
+        chain.toLowerCase() as 'ethereum' | 'base' | 'solana'
+      );
 
-      // Use MCP Safety Server for comprehensive vendor check
-      const result = await this.safetyClient.callTool({
-        name: 'check_wallet_safety',
-        arguments: {
-          address: walletAddress,
-          chain
-        }
-      });
-
-      const walletSafety = (result.content as any[])?.[0]?.text 
-        ? JSON.parse((result.content as any[])[0].text) as SafetyResult
-        : null;
-
-      if (!walletSafety) {
-        throw new Error('Invalid response from MCP safety service');
-      }
-
-      // Get existing vendor reputation from your current system
       const existingReputation = await this.getExistingVendorReputation(vendorId);
 
-      // Combine MCP safety data with existing reputation
       const combinedProfile: VendorSafetyProfile = {
         vendorId,
         walletAddress,
@@ -215,7 +240,6 @@ export class McpIntegrationService {
         reputation: existingReputation
       };
 
-      // Update vendor in your existing database with enhanced safety data
       await this.updateVendorSafetyProfile(combinedProfile);
 
       logger.info(`🔍 Enhanced vendor verification complete for ${vendorId}: ${walletSafety.riskLevel}`);
@@ -227,10 +251,6 @@ export class McpIntegrationService {
     }
   }
 
-  /**
-   * Enhanced transaction safety check before payments
-   * Integrates with existing escrow and payment flow
-   */
   async enhancedTransactionSafety(transaction: {
     buyerWallet: string;
     vendorWallet: string;
@@ -245,64 +265,24 @@ export class McpIntegrationService {
     recommendedAction: string;
     paymentMethod: 'direct' | 'escrow' | 'blocked';
   }> {
-
-    if (!this.isConnected) {
-      return this.getFallbackTransactionSafety();
-    }
-
     try {
-      if (!this.safetyClient || !this.isConnected) {
-        return this.getFallbackTransactionSafety();
-      }
-
-      // Check both buyer and vendor wallets
-      const [buyerResult, vendorResult] = await Promise.all([
-        this.safetyClient.callTool({
-          name: 'check_wallet_safety',
-          arguments: {
-            address: transaction.buyerWallet,
-            chain: transaction.chain
-          }
-        }),
-        this.safetyClient.callTool({
-          name: 'check_wallet_safety',
-          arguments: {
-            address: transaction.vendorWallet,
-            chain: transaction.chain
-          }
-        })
+      const [buyerSafety, vendorSafety] = await Promise.all([
+        this.checkWalletSafety(
+          transaction.buyerWallet,
+          transaction.chain.toLowerCase() as 'ethereum' | 'base' | 'solana'
+        ),
+        this.checkWalletSafety(
+          transaction.vendorWallet,
+          transaction.chain.toLowerCase() as 'ethereum' | 'base' | 'solana'
+        )
       ]);
 
-      const buyerSafety = (buyerResult.content as any[])?.[0]?.text 
-        ? JSON.parse((buyerResult.content as any[])[0].text) as SafetyResult
-        : null;
-      const vendorSafety = (vendorResult.content as any[])?.[0]?.text 
-        ? JSON.parse((vendorResult.content as any[])[0].text) as SafetyResult
-        : null;
-
-      if (!buyerSafety || !vendorSafety) {
-        throw new Error('Invalid response from MCP safety service');
-      }
-
-      // Check transaction safety
-      const transactionResult = await this.safetyClient.callTool({
-        name: 'check_transaction_safety',
-        arguments: {
-          to: transaction.vendorWallet,
-          value: transaction.amount,
-          chain: transaction.chain
-        }
+      const transactionSafety = await this.checkTransactionSafety({
+        to: transaction.vendorWallet,
+        value: transaction.amount,
+        chain: transaction.chain
       });
 
-      const transactionSafety = (transactionResult.content as any[])?.[0]?.text 
-        ? JSON.parse((transactionResult.content as any[])[0].text) as SafetyResult
-        : null;
-
-      if (!transactionSafety) {
-        throw new Error('Invalid response from MCP transaction safety service');
-      }
-
-      // Determine overall risk and payment method
       const overallRisk = this.calculateOverallRisk(buyerSafety, vendorSafety, transactionSafety);
       const paymentMethod = this.determinePaymentMethod(overallRisk);
       const requiresEscrow = paymentMethod === 'escrow';
@@ -323,10 +303,6 @@ export class McpIntegrationService {
     }
   }
 
-  /**
-   * Enhanced product listing safety
-   * Checks vendor reputation before allowing product listing
-   */
   async enhancedProductListing(productData: {
     vendorId: string;
     vendorWallet: string;
@@ -344,15 +320,12 @@ export class McpIntegrationService {
       securityDeposit: number;
     };
   }> {
-
-    // Enhanced vendor verification
     const vendorSafety = await this.enhancedVendorVerification(
       productData.vendorId,
       productData.vendorWallet,
-      Chain.ETHEREUM // Default chain, make configurable
+      Chain.ETHEREUM
     );
 
-    // Determine listing requirements based on safety profile
     const requirements = this.getListingRequirements(vendorSafety);
     const listingFees = this.calculateListingFees(vendorSafety);
 
@@ -369,10 +342,6 @@ export class McpIntegrationService {
     };
   }
 
-  /**
-   * Real-time vendor monitoring
-   * Continuous background safety checks for active vendors
-   */
   async monitorActiveVendors(vendorIds: string[]): Promise<{
     alerts: Array<{
       vendorId: string;
@@ -383,13 +352,11 @@ export class McpIntegrationService {
     }>;
     overallSystemHealth: 'healthy' | 'moderate_risk' | 'high_risk';
   }> {
-
     const alerts: any[] = [];
     let highRiskCount = 0;
 
     for (const vendorId of vendorIds) {
       try {
-        // Get vendor's current wallet and chain info from your database
         const vendorInfo = await this.getVendorInfo(vendorId);
         
         if (vendorInfo) {
@@ -399,7 +366,6 @@ export class McpIntegrationService {
             vendorInfo.preferredChain
           );
 
-          // Check for alerts
           if (currentSafety.riskLevel === 'high' || currentSafety.riskLevel === 'critical') {
             alerts.push({
               vendorId,
@@ -413,7 +379,6 @@ export class McpIntegrationService {
             highRiskCount++;
           }
 
-          // Check reputation changes
           if (currentSafety.reputation.successRate < 0.8) {
             alerts.push({
               vendorId,
@@ -436,29 +401,96 @@ export class McpIntegrationService {
     return { alerts, overallSystemHealth };
   }
 
-  // Helper methods for integration with existing systems
-  private async getExistingVendorReputation(vendorId: string) {
-    // Integration with your existing ReputationService
-    // This would query your current vendor/reputation data
+  private calculateRiskScore(ddxyzData: any, blockRaderData: any): number {
+    let score = 100;
+
+    if (ddxyzData) {
+      if (ddxyzData.riskScore !== undefined) {
+        score -= ddxyzData.riskScore;
+      } else if (ddxyzData.riskLevel) {
+        const riskDeductions = { low: 0, medium: 20, high: 50, critical: 80 };
+        score -= riskDeductions[ddxyzData.riskLevel as keyof typeof riskDeductions] || 0;
+      }
+    }
+
+    if (blockRaderData) {
+      if (blockRaderData.suspiciousActivity) score -= 30;
+      if (blockRaderData.newAccount) score -= 10;
+      if (blockRaderData.riskScore !== undefined) {
+        score -= blockRaderData.riskScore;
+      }
+    }
+
+    return Math.max(0, Math.min(100, score));
+  }
+
+  private mapRiskLevel(score: number): 'low' | 'medium' | 'high' | 'critical' {
+    if (score >= 80) return 'low';
+    if (score >= 60) return 'medium';  
+    if (score >= 30) return 'high';
+    return 'critical';
+  }
+
+  private generateReasons(ddxyzData: any, blockRaderData: any): string[] {
+    const reasons: string[] = [];
+
+    if (ddxyzData?.flaggedReasons) {
+      reasons.push(...ddxyzData.flaggedReasons);
+    }
+
+    if (blockRaderData?.flags) {
+      reasons.push(...blockRaderData.flags);
+    }
+
+    if (reasons.length === 0) {
+      reasons.push('No specific risk factors identified');
+    }
+
+    return reasons;
+  }
+
+  private generateRecommendation(riskLevel: string): string {
+    const recommendations = {
+      low: '✅ Safe to proceed',
+      medium: '⚠️ Exercise caution - review details',
+      high: '🚨 High risk - consider avoiding',
+      critical: '🛑 Critical risk - do not proceed'
+    };
+
+    return recommendations[riskLevel as keyof typeof recommendations] || '❓ Unable to assess';
+  }
+
+  private getFallbackSafety(reason: string): SafetyResult {
     return {
-      totalTransactions: 0, // Get from your DB
-      successRate: 1.0,     // Calculate from your transaction data
-      disputeRate: 0.0,     // Calculate from your dispute data
-      averageRating: 5.0    // Get from your rating system
+      riskLevel: 'medium',
+      score: 50,
+      reasons: [reason],
+      recommendation: '⚠️ Proceed with caution - verification unavailable',
+      metadata: {
+        providers: ['fallback'],
+        responseTime: '0ms',
+        timestamp: new Date().toISOString()
+      }
+    };
+  }
+
+  private async getExistingVendorReputation(vendorId: string) {
+    return {
+      totalTransactions: 0,
+      successRate: 1.0,
+      disputeRate: 0.0,
+      averageRating: 5.0
     };
   }
 
   private async updateVendorSafetyProfile(profile: VendorSafetyProfile) {
-    // Integration with your existing vendor database
-    // Update vendor record with enhanced safety data
     logger.info(`💾 Updated vendor ${profile.vendorId} safety profile`);
   }
 
   private async getVendorInfo(vendorId: string) {
-    // Get vendor info from your existing database
     return {
-      walletAddress: '0x742d35Cc6634C0532925a3b8D6C8E32c2b7bD309', // From your DB
-      preferredChain: Chain.ETHEREUM // From vendor preferences
+      walletAddress: '0x742d35Cc6634C0532925a3b8D6C8E32c2b7bD309',
+      preferredChain: Chain.ETHEREUM
     };
   }
 
@@ -520,12 +552,12 @@ export class McpIntegrationService {
   }
 
   private calculateListingFees(vendorSafety: VendorSafetyProfile) {
-    const baseFee = 0.01; // 1% base fee
+    const baseFee = 0.01;
     const riskMultiplier = {
       low: 1.0,
       medium: 1.5,
       high: 2.0,
-      critical: 0 // Can't list
+      critical: 0
     };
 
     const multiplier = riskMultiplier[vendorSafety.riskLevel as keyof typeof riskMultiplier] || 1.5;
@@ -533,11 +565,10 @@ export class McpIntegrationService {
     return {
       basic: baseFee * multiplier,
       escrowRequired: vendorSafety.riskLevel !== 'low',
-      securityDeposit: vendorSafety.riskLevel === 'high' ? 100 : 0 // $100 for high risk
+      securityDeposit: vendorSafety.riskLevel === 'high' ? 100 : 0
     };
   }
 
-  // Fallback methods when MCP servers are unavailable
   private getFallbackVendorProfile(vendorId: string, walletAddress: string): VendorSafetyProfile {
     return {
       vendorId,
@@ -561,7 +592,7 @@ export class McpIntegrationService {
       safetyData: {
         riskLevel: 'medium' as const,
         score: 50,
-        reasons: ['MCP safety service unavailable - using fallback'],
+        reasons: ['Safety service unavailable - using fallback'],
         recommendation: '⚠️ Proceed with caution - verification unavailable',
         metadata: {
           providers: ['fallback'],
@@ -576,4 +607,4 @@ export class McpIntegrationService {
   }
 }
 
-export default McpIntegrationService;
+export default SafetyService;

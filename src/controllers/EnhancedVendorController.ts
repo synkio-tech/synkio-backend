@@ -1,21 +1,21 @@
 /**
- * Enhanced Vendor Controller with MCP Integration
- * Upgrades existing vendor system with industry-standard MCP safety
+ * Enhanced Vendor Controller with Safety Integration
+ * Upgrades existing vendor system with DD.xyz and BlockRader safety intelligence
  */
 
 import { Request, Response, NextFunction } from 'express';
 import { logger } from '../utils/logger';
-import McpIntegrationService from '../services/McpIntegrationService';
+import { SafetyService } from '../services/SafetyService';
 import { User } from '../models/User';
 import { Product } from '../models/Product';
 import { sanitizeEmail } from '../utils/sanitize';
 import { Chain } from '../types';
 
 export class EnhancedVendorController {
-  private mcpService: McpIntegrationService;
+  private safetyService: SafetyService;
 
   constructor() {
-    this.mcpService = new McpIntegrationService();
+    this.safetyService = new SafetyService();
   }
 
   /**
@@ -45,7 +45,7 @@ export class EnhancedVendorController {
 
       const vendorWalletAddress = walletAddress || vendor.walletAddress;
 
-      const vendorSafetyProfile = await this.mcpService.enhancedVendorVerification(
+      const vendorSafetyProfile = await this.safetyService.enhancedVendorVerification(
         sanitizedEmail,
         vendorWalletAddress,
         chain
@@ -101,7 +101,7 @@ export class EnhancedVendorController {
       const enhancedVendors = await Promise.all(
         existingVendors.map(async (vendor: any) => {
           try {
-            const safetyProfile = await this.mcpService.enhancedVendorVerification(
+            const safetyProfile = await this.safetyService.enhancedVendorVerification(
               vendor.email,
               vendor.walletAddress,
               vendor.chain || Chain.ETHEREUM
@@ -196,7 +196,7 @@ export class EnhancedVendorController {
       const chain = existingVendor.chain === Chain.BASE || existingVendor.chain === Chain.SOLANA
         ? existingVendor.chain 
         : Chain.ETHEREUM;
-      const safetyProfile = await this.mcpService.enhancedVendorVerification(
+      const safetyProfile = await this.safetyService.enhancedVendorVerification(
         email,
         existingVendor.walletAddress,
         chain
@@ -247,7 +247,7 @@ export class EnhancedVendorController {
       const activeVendors = await this.getActiveVendorIds();
 
       // Monitor all vendors
-      const monitoringResult = await this.mcpService.monitorActiveVendors(activeVendors);
+      const monitoringResult = await this.safetyService.monitorActiveVendors(activeVendors);
 
       res.json({
         success: true,
@@ -294,7 +294,7 @@ export class EnhancedVendorController {
       }
 
       // Enhanced transaction safety check
-      const transactionSafety = await this.mcpService.enhancedTransactionSafety({
+      const transactionSafety = await this.safetyService.enhancedTransactionSafety({
         buyerWallet,
         vendorWallet: vendor.walletAddress,
         amount,

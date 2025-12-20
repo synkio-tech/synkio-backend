@@ -18,7 +18,7 @@ import { EscrowService } from './services/EscrowService';
 import { PaymentService } from './services/PaymentService';
 import { ReputationService } from './services/ReputationService';
 import { DisputeService } from './services/DisputeService';
-import { WebSocketService } from './services/WebSocketService';
+import { WebSocketService } from './libs/WebSocketService';
 import { setWebSocketService } from './services/websocket';
 
 // Import routes
@@ -33,7 +33,6 @@ import networkRoutes from './routes/networks';
 import categoryRoutes from './routes/categories';
 import waitlistRoutes from './routes/waitlist';
 import { emailService } from './services/EmailService';
-import { McpIntegrationService } from './services/McpIntegrationService';
 
 
 const app = express();
@@ -134,9 +133,6 @@ app.use('/api/waitlist', waitlistRoutes);
 const wsService = new WebSocketService(httpServer);
 setWebSocketService(wsService);
 
-// Initialize MCP Integration Service
-const mcpIntegrationService = new McpIntegrationService();
-
 // Health check
 app.get('/', (req, res) => {
   res.status(200).json({
@@ -167,15 +163,6 @@ app.get('/api/email/status', (req, res) => {
       smtpUser: smtpUser ? smtpUser.substring(0, 3) + '***' : 'not set',
       smtpPass: smtpPass ? '***' : 'not set'
     }
-  });
-});
-
-// MCP service diagnostic endpoint
-app.get('/api/mcp/status', (req, res) => {
-  const status = mcpIntegrationService.getStatus();
-  res.status(200).json({
-    success: true,
-    mcpService: status
   });
 });
 

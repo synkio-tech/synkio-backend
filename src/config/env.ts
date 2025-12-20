@@ -46,21 +46,8 @@ export const config = {
     googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
   },
   
-  mcp: {
-    transport: (process.env.MCP_TRANSPORT || 'stdio') as 'stdio' | 'sse',
-    safetyServer: {
-      url: process.env.MCP_SAFETY_SERVER_URL,
-      command: process.env.MCP_SAFETY_SERVER_COMMAND || 'npx',
-      args: process.env.MCP_SAFETY_SERVER_ARGS 
-        ? process.env.MCP_SAFETY_SERVER_ARGS.split(' ')
-        : ['-y', '@synkio/mcp-safety'],
-    },
-    paymentsServer: {
-      url: process.env.MCP_PAYMENTS_SERVER_URL,
-      command: process.env.MCP_PAYMENTS_SERVER_COMMAND || 'npx',
-      args: process.env.MCP_PAYMENTS_SERVER_ARGS
-        ? process.env.MCP_PAYMENTS_SERVER_ARGS.split(' ')
-        : ['-y', '@synkio/mcp-payments'],
-    },
+  safety: {
+    ddxyzApiKey: process.env.DDXYZ_API_KEY,
+    blockRaderApiKey: process.env.BLOCKRADER_API_KEY,
   },
 } as const;

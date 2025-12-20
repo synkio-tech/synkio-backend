@@ -1,5 +1,5 @@
 import { logger } from '../utils/logger';
-import { WebSocketService } from './WebSocketService';
+import { WebSocketService } from '../libs/WebSocketService';
 
 let wsServiceInstance: WebSocketService | null = null;
 
