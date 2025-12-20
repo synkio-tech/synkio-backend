@@ -4,16 +4,12 @@
  * Maintains compatibility with current vendor/product system
  */
 
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { logger } from '../utils/logger';
 import { Chain } from '../types';
-// MCP SDK import - optional, only if package is installed
-let McpClient: any;
-try {
-  const mcpSdk = require('@modelcontextprotocol/sdk');
-  McpClient = mcpSdk.McpClient;
-} catch (error) {
-  logger.warn('@modelcontextprotocol/sdk not installed - MCP features disabled');
-}
+import { config } from '../config/env';
 
 interface SafetyResult {
   riskLevel: 'low' | 'medium' | 'high' | 'critical';
@@ -43,31 +39,130 @@ interface VendorSafetyProfile {
 }
 
 export class McpIntegrationService {
-  private safetyClient: any;
-  private paymentsClient: any;
+  private safetyClient: Client | null = null;
+  private paymentsClient: Client | null = null;
   private isConnected: boolean = false;
+  private transportType: 'stdio' | 'sse' | 'none' = 'none';
 
   constructor() {
-    if (!McpClient) {
-      logger.warn('MCP SDK not available - McpIntegrationService will use fallback mode');
-      return;
+    try {
+      this.safetyClient = new Client(
+        {
+          name: 'synkio-backend',
+          version: '1.0.0',
+        },
+        {
+          capabilities: {}
+        }
+      );
+      
+      this.paymentsClient = new Client(
+        {
+          name: 'synkio-backend',
+          version: '1.0.0',
+        },
+        {
+          capabilities: {}
+        }
+      );
+      
+      this.initialize();
+    } catch (error) {
+      logger.warn('MCP SDK initialization failed - McpIntegrationService will use fallback mode', { error });
     }
-    
-    this.safetyClient = new McpClient('synkio-safety');
-    this.paymentsClient = new McpClient('synkio-payments');
-    this.initialize();
   }
 
   private async initialize() {
+    if (!this.safetyClient || !this.paymentsClient) {
+      logger.warn('MCP clients not initialized - using fallback mode');
+      return;
+    }
+
     try {
-      await this.safetyClient.connect();
-      await this.paymentsClient.connect();
+      const transport = config.mcp.transport;
+      
+      if (transport === 'stdio') {
+        await this.initializeStdioTransport();
+      } else if (transport === 'sse') {
+        await this.initializeSSETransport();
+      } else {
+        throw new Error(`Unsupported MCP transport: ${transport}`);
+      }
+
       this.isConnected = true;
-      logger.info('🛡️ MCP Integration Service connected successfully');
+      this.transportType = transport;
+      logger.info(`🛡️ MCP Integration Service connected via ${transport.toUpperCase()} transport`);
     } catch (error) {
       logger.error('❌ MCP Integration failed:', error);
       this.isConnected = false;
     }
+  }
+
+  private async initializeStdioTransport() {
+    if (!this.safetyClient || !this.paymentsClient) {
+      return;
+    }
+
+    const { safetyServer, paymentsServer } = config.mcp;
+
+    const safetyTransport = new StdioClientTransport({
+      command: safetyServer.command,
+      args: safetyServer.args,
+      env: {
+        ...process.env,
+        DDXYZ_API_KEY: process.env.DDXYZ_API_KEY || '',
+        BLOCKRADER_API_KEY: process.env.BLOCKRADER_API_KEY || '',
+      },
+    });
+
+    const paymentsTransport = new StdioClientTransport({
+      command: paymentsServer.command,
+      args: paymentsServer.args,
+    });
+
+    await this.safetyClient.connect(safetyTransport);
+    await this.paymentsClient.connect(paymentsTransport);
+
+    logger.info('✅ MCP servers connected via stdio (local processes)');
+  }
+
+  private async initializeSSETransport() {
+    if (!this.safetyClient || !this.paymentsClient) {
+      return;
+    }
+
+    const { safetyServer, paymentsServer } = config.mcp;
+
+    if (!safetyServer.url || !paymentsServer.url) {
+      throw new Error('MCP server URLs required for SSE transport. Set MCP_SAFETY_SERVER_URL and MCP_PAYMENTS_SERVER_URL');
+    }
+
+    const safetyTransport = new SSEClientTransport(
+      new URL(safetyServer.url)
+    );
+
+    const paymentsTransport = new SSEClientTransport(
+      new URL(paymentsServer.url)
+    );
+
+    await this.safetyClient.connect(safetyTransport);
+    await this.paymentsClient.connect(paymentsTransport);
+
+    logger.info(`✅ MCP servers connected via SSE: ${safetyServer.url}, ${paymentsServer.url}`);
+  }
+
+  getStatus() {
+    return {
+      connected: this.isConnected,
+      transport: this.transportType,
+      safetyClient: this.safetyClient !== null,
+      paymentsClient: this.paymentsClient !== null,
+      config: {
+        transport: config.mcp.transport,
+        safetyServerUrl: config.mcp.safetyServer.url || 'not set (using stdio)',
+        paymentsServerUrl: config.mcp.paymentsServer.url || 'not set (using stdio)',
+      }
+    };
   }
 
   /**
@@ -85,11 +180,26 @@ export class McpIntegrationService {
     }
 
     try {
+      if (!this.safetyClient || !this.isConnected) {
+        return this.getFallbackVendorProfile(vendorId, walletAddress);
+      }
+
       // Use MCP Safety Server for comprehensive vendor check
-      const walletSafety = await this.safetyClient.invokeTool('check_wallet_safety', {
-        address: walletAddress,
-        chain
-      }) as SafetyResult;
+      const result = await this.safetyClient.callTool({
+        name: 'check_wallet_safety',
+        arguments: {
+          address: walletAddress,
+          chain
+        }
+      });
+
+      const walletSafety = (result.content as any[])?.[0]?.text 
+        ? JSON.parse((result.content as any[])[0].text) as SafetyResult
+        : null;
+
+      if (!walletSafety) {
+        throw new Error('Invalid response from MCP safety service');
+      }
 
       // Get existing vendor reputation from your current system
       const existingReputation = await this.getExistingVendorReputation(vendorId);
@@ -141,24 +251,56 @@ export class McpIntegrationService {
     }
 
     try {
+      if (!this.safetyClient || !this.isConnected) {
+        return this.getFallbackTransactionSafety();
+      }
+
       // Check both buyer and vendor wallets
-      const [buyerSafety, vendorSafety] = await Promise.all([
-        this.safetyClient.invokeTool('check_wallet_safety', {
-          address: transaction.buyerWallet,
-          chain: transaction.chain
-        }) as Promise<SafetyResult>,
-        this.safetyClient.invokeTool('check_wallet_safety', {
-          address: transaction.vendorWallet,
-          chain: transaction.chain
-        }) as Promise<SafetyResult>
+      const [buyerResult, vendorResult] = await Promise.all([
+        this.safetyClient.callTool({
+          name: 'check_wallet_safety',
+          arguments: {
+            address: transaction.buyerWallet,
+            chain: transaction.chain
+          }
+        }),
+        this.safetyClient.callTool({
+          name: 'check_wallet_safety',
+          arguments: {
+            address: transaction.vendorWallet,
+            chain: transaction.chain
+          }
+        })
       ]);
 
+      const buyerSafety = (buyerResult.content as any[])?.[0]?.text 
+        ? JSON.parse((buyerResult.content as any[])[0].text) as SafetyResult
+        : null;
+      const vendorSafety = (vendorResult.content as any[])?.[0]?.text 
+        ? JSON.parse((vendorResult.content as any[])[0].text) as SafetyResult
+        : null;
+
+      if (!buyerSafety || !vendorSafety) {
+        throw new Error('Invalid response from MCP safety service');
+      }
+
       // Check transaction safety
-      const transactionSafety = await this.safetyClient.invokeTool('check_transaction_safety', {
-        to: transaction.vendorWallet,
-        value: transaction.amount,
-        chain: transaction.chain
-      }) as SafetyResult;
+      const transactionResult = await this.safetyClient.callTool({
+        name: 'check_transaction_safety',
+        arguments: {
+          to: transaction.vendorWallet,
+          value: transaction.amount,
+          chain: transaction.chain
+        }
+      });
+
+      const transactionSafety = (transactionResult.content as any[])?.[0]?.text 
+        ? JSON.parse((transactionResult.content as any[])[0].text) as SafetyResult
+        : null;
+
+      if (!transactionSafety) {
+        throw new Error('Invalid response from MCP transaction safety service');
+      }
 
       // Determine overall risk and payment method
       const overallRisk = this.calculateOverallRisk(buyerSafety, vendorSafety, transactionSafety);
