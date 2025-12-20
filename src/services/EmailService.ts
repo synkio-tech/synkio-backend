@@ -29,7 +29,13 @@ class EmailService {
       auth: {
         user: smtpUser,
         pass: smtpPass
-      }
+      },
+      connectionTimeout: 60000,
+      greetingTimeout: 30000,
+      socketTimeout: 60000,
+      pool: true,
+      maxConnections: 5,
+      maxMessages: 100
     });
 
     logger.info('Email service initialized', { host: smtpHost, port: smtpPort, user: smtpUser.substring(0, 3) + '***' });
@@ -167,10 +173,15 @@ You're receiving this because you signed up for our waitlist.`;
       const errorMessage = error.message || 'Unknown error';
       const errorCode = error.code || 'UNKNOWN';
       
-      let userFriendlyMessage = errorMessage;
-      
-      if (errorCode === 'EAUTH' || errorMessage.includes('Invalid login') || errorMessage.includes('WebLoginRequired')) {
-        userFriendlyMessage = 'Gmail authentication failed. Please use an App Password instead of your regular password. See: https://support.google.com/accounts/answer/185833';
+      if (errorCode === 'ETIMEDOUT' || errorMessage.includes('timeout') || errorMessage.includes('Connection timeout')) {
+        logger.error('SMTP connection timeout - server may be slow or unreachable', {
+          email,
+          errorCode,
+          error: errorMessage,
+          hint: 'Check SMTP server connectivity and network settings',
+          smtpHost: config.email.smtpHost
+        });
+      } else if (errorCode === 'EAUTH' || errorMessage.includes('Invalid login') || errorMessage.includes('WebLoginRequired')) {
         logger.error('Gmail authentication error - App Password required', {
           email,
           errorCode,
